@@ -8,7 +8,6 @@ pandas
 tabulate
 # 额外的数据库驱动
 pymssql
-oracledb
 dmPython
 dmSQLAlchemy  # 达梦数据库 SQLAlchemy 方言适配器
 

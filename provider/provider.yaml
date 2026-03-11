@@ -140,6 +140,18 @@ credentials_for_provider:
       zh_Hans: 数据库名称
       pt_BR: Database name
 
+  db_schema:
+    type: text-input
+    required: false
+    label:
+      en_US: Database Schema
+      zh_Hans: 数据库架构模式
+      pt_BR: Database Schema
+    placeholder:
+      en_US: Database Schema (Optional, e.g., public)
+      zh_Hans: 数据库架构模式 (可选，如 public, aicloud_inspect)
+      pt_BR: Database Schema (Optional, e.g., public)
+
 
   # build_rag:
   #   type: boolean

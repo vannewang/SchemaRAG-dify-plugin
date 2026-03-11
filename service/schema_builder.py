@@ -8,6 +8,20 @@ sys.path.append(
 
 from sqlalchemy.engine import Engine
 from sqlalchemy import create_engine
+import re
+from sqlalchemy.dialects.postgresql.base import PGDialect
+
+# openGauss 版本号适配补丁
+_original_get_server_version_info = PGDialect._get_server_version_info
+def _patched_get_server_version_info(self, connection):
+    try:
+        return _original_get_server_version_info(self, connection)
+    except Exception as e:
+        if "openGauss" in str(e):
+            return (9, 2, 4) # openGauss 默认兼容 PostgreSQL 9.2.4
+        raise
+PGDialect._get_server_version_info = _patched_get_server_version_info
+
 from core.m_schema.schema_engine import SchemaEngine
 
 # 尝试导入达梦数据库 SQLAlchemy 方言，如果可用则自动注册
@@ -110,13 +124,14 @@ class SchemaRAGBuilder:
         try:
             self.schema_engine = SchemaEngine(
                 engine=self.engine,
+                schema=self.db_config.schema or None,
                 db_name=self.db_config.database,
                 include_tables=self.include_tables,
             )
             self.logger.info("Schema引擎初始化成功")
         except Exception as e:
             self.logger.error(f"Schema引擎初始化失败: {e}")
-            raise RuntimeError("无法初始化Schema引擎，请检查数据库配置")
+            raise RuntimeError(f"无法初始化Schema引擎，请检查数据库配置 (原因: {str(e)})")
         if self.dify_config:
             try:
                 self.uploader = DifyUploader(self.dify_config, self.logger)

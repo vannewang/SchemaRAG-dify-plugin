@@ -37,6 +37,7 @@ class DatabaseConfig:
     user: str = get_env("DB_USER", "root")
     password: str = get_env("DB_PASSWORD", "password")
     database: str = get_env("DB_NAME")
+    schema: Optional[str] = get_env("DB_SCHEMA", None)
 
     def get_connection_string(self) -> str:
         """获取数据库连接字符串"""
@@ -53,9 +54,6 @@ class DatabaseConfig:
             return f"mysql+pymysql://{encoded_user}:{encoded_password}@{self.host}:{self.port}/{self.database}"
         elif self.type == "mssql":
             return f"mssql+pymssql://{encoded_user}:{encoded_password}@{self.host}:{self.port}/{self.database}"
-        elif self.type == "oracle":
-            # Oracle 使用 service_name 格式
-            return f"oracle+oracledb://{encoded_user}:{encoded_password}@{self.host}:{self.port}/?service_name={self.database}"
         elif self.type == "dameng":
             return f"dm+dmPython://{encoded_user}:{encoded_password}@{self.host}:{self.port}/{self.database}"
         elif self.type == "doris":

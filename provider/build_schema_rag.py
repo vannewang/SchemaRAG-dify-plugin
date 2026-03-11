@@ -115,6 +115,7 @@ class SchemaRAGBuilderProvider(ToolProvider):
                     user=credentials.get("db_user"),
                     password=credentials.get("db_password"),
                     database=credentials.get("db_name"),
+                    schema=credentials.get("db_schema") or None,
                 )
             else:
                 db_config = DatabaseConfig(
@@ -124,6 +125,7 @@ class SchemaRAGBuilderProvider(ToolProvider):
                     user=credentials.get("db_user"),
                     password=credentials.get("db_password"),
                     database=credentials.get("db_name"),
+                    schema=credentials.get("db_schema") or None,
                 )
 
             # 创建日志配置
@@ -161,12 +163,13 @@ class SchemaRAGBuilderProvider(ToolProvider):
 
                 # 记录成功信息
                 table_count = schema_content.count("#") if schema_content else 0
-                logging.info(f"📊 数据字典生成成功！包含 {table_count} 个表")
+                logging.info(f"数据字典生成成功！包含 {table_count} 个表")
 
-                # 上传到 Dify 知识库
-                dataset_name = f"{db_config.database}_schema"
+                # 上传到 Dify 知识库，知识库名称包含schema信息
+                schema_suffix = f"_{db_config.schema}" if db_config.schema else ""
+                dataset_name = f"{db_config.database}{schema_suffix}_schema"
                 builder.upload_text_to_dify(dataset_name, schema_content)
-                logging.info("☁️ 已成功上传到 Dify 知识库")
+                logging.info("已成功上传到 Dify 知识库")
 
             except Exception as e:
                 logging.error(f"❌ Schema RAG构建失败: {e}")

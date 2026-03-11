@@ -309,3 +309,8 @@ A: 可以在 custom_rules 参数中指定特定的分析要求、关注点或约
 ## 📄 许可证
 
 Apache-2.0 license
+
+
+
+## 打包打包命令， 自行修改版本号即可
+python -c "import os, zipfile; zf = zipfile.ZipFile('schemarag-plugin-0.1.6.2.difypkg', 'w', zipfile.ZIP_DEFLATED); [zf.write(os.path.join(r, f), os.path.relpath(os.path.join(r, f), '.')) for r, d, f in os.walk('.') if '.git' not in r and '__pycache__' not in r and '.venv' not in r for f in f if not f.endswith('.zip') and '.difypkg' not in f]; zf.close(); print('Successfully packed into schemarag-plugin-0.1.6.2.difypkg')"

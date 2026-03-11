@@ -6,6 +6,20 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.exc import SQLAlchemyError, OperationalError, ProgrammingError
 from urllib.parse import quote_plus
 
+import re
+from sqlalchemy.dialects.postgresql.base import PGDialect
+
+# openGauss 版本号适配补丁
+_original_get_server_version_info = PGDialect._get_server_version_info
+def _patched_get_server_version_info(self, connection):
+    try:
+        return _original_get_server_version_info(self, connection)
+    except Exception as e:
+        if "openGauss" in str(e):
+            return (9, 2, 4) # openGauss 默认兼容 PostgreSQL 9.2.4
+        raise
+PGDialect._get_server_version_info = _patched_get_server_version_info
+
 # 尝试导入达梦数据库驱动和 SQLAlchemy 方言，如果不存在则忽略
 try:
     import dmPython
@@ -34,8 +48,7 @@ class DatabaseService:
     DB_DRIVERS = {
         "mysql": "mysql+pymysql",
         "postgresql": "postgresql+psycopg2",
-        "mssql": "mssql+pymssql",
-        "oracle": "oracle+oracledb",
+            "mssql": "mssql+pymssql",
         "dameng": "dm+dmPython",  # 达梦数据库
         "doris": "doris+pymysql",  # Apache Doris (使用 MySQL 协议)
     }
@@ -74,10 +87,7 @@ class DatabaseService:
         driver = self.DB_DRIVERS[db_type]
 
         # 针对不同数据库类型构建 URI
-        if db_type == "oracle":
-            # Oracle 使用 service_name
-            return f"{driver}://{encoded_user}:{encoded_password}@{host}:{port}/?service_name={dbname}"
-        elif db_type == "dameng":
+        if db_type == "dameng":
             # 达梦数据库特殊处理
             if not DAMENG_AVAILABLE:
                 raise ValueError(
@@ -132,9 +142,6 @@ class DatabaseService:
             elif db_type == "mssql":
                 # SQL Server (pymssql) 配置：charset 使用小写 utf8
                 engine_args["connect_args"] = {"charset": "utf8"}
-            elif db_type == "oracle":
-                # Oracle 使用 thin 模式，需要在 connect_args 中配置
-                engine_args["connect_args"] = {"thick_mode_dsn_passthrough": False}
             elif db_type == "dameng":
                 # 达梦数据库特殊配置
                 engine_args["connect_args"] = {
@@ -159,7 +166,7 @@ class DatabaseService:
         使用 SQLAlchemy 连接数据库并执行查询
 
         Args:
-            db_type: 数据库类型 (mysql, postgresql, mssql, oracle, dameng)
+            db_type: 数据库类型 (mysql, postgresql, mssql, dameng)
             host: 数据库主机地址
             port: 数据库端口
             user: 数据库用户名
