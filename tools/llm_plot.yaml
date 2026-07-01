@@ -44,7 +44,7 @@ parameters:
       zh_Hans: 要可视化的JSON格式数据
       en_US: JSON format data to be visualized
     llm_description: The data to be visualized in JSON format
-    form: form
+    form: llm
     
   - name: llm
     type: model-selector

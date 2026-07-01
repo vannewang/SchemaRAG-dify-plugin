@@ -1,0 +1,63 @@
+identity:
+  name: llm_plot_lite
+  author: joto
+  label:
+    zh_Hans: 轻量图表配置生成器
+    en_US: Lightweight Chart Config Generator
+description:
+  human:
+    zh_Hans: 基于规则快速生成前端可渲染的 ECharts JSON 配置，不调用大模型和外部画图接口。
+    en_US: Generate frontend-renderable ECharts JSON config by rules without LLM or external chart API.
+  llm: Generate structured chart config JSON for frontend rendering.
+parameters:
+  - name: user_question
+    type: string
+    required: false
+    label:
+      zh_Hans: 用户问题
+      en_US: User Question
+    human_description:
+      zh_Hans: 用户原始问题，用于辅助判断图表类型。
+      en_US: Original user question for chart type inference.
+    llm_description: Original user question for chart type inference.
+    form: llm
+
+  - name: sql_query
+    type: string
+    required: false
+    label:
+      zh_Hans: SQL 查询
+      en_US: SQL Query
+    human_description:
+      zh_Hans: SQL 查询语句，用于辅助判断字段语义。
+      en_US: SQL query for field semantic inference.
+    llm_description: SQL query for field semantic inference.
+    form: llm
+
+  - name: data
+    type: string
+    required: true
+    label:
+      zh_Hans: 图表数据
+      en_US: Chart Data
+    human_description:
+      zh_Hans: JSON 数组数据，推荐传入图表数据预处理节点的 chart_data。
+      en_US: JSON array data, usually from chart preprocessing node chart_data.
+    llm_description: JSON array data for chart rendering.
+    form: llm
+
+  - name: title
+    type: string
+    required: false
+    label:
+      zh_Hans: 图表标题
+      en_US: Chart Title
+    human_description:
+      zh_Hans: 可选标题，未填写时使用用户问题或默认标题。
+      en_US: Optional title. Falls back to user question or default title.
+    llm_description: Optional chart title.
+    form: llm
+
+extra:
+  python:
+    source: tools/llm_plot_lite.py
