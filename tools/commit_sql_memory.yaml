@@ -1,0 +1,71 @@
+identity:
+  name: commit_sql_memory
+  author: joto
+  label:
+    en_US: Commit SQL Memory
+    zh_Hans: 提交 SQL 记忆
+    pt_BR: Commit SQL Memory
+
+description:
+  human:
+    en_US: Save a successfully executed SQL query into the current Dify session memory.
+    zh_Hans: 将已成功执行的 SQL 写入当前 Dify 会话记忆。
+    pt_BR: Save a successfully executed SQL query into the current Dify session memory.
+  llm: Save a successfully executed SQL query into the current Dify session memory.
+
+parameters:
+  - name: query
+    type: string
+    required: true
+    label:
+      en_US: User Query
+      zh_Hans: 用户问题
+      pt_BR: User Query
+    human_description:
+      en_US: The original user question for the executed SQL.
+      zh_Hans: 已成功执行 SQL 对应的原始用户问题。
+      pt_BR: The original user question for the executed SQL.
+    form: llm
+
+  - name: sql
+    type: string
+    required: true
+    label:
+      en_US: Valid SQL
+      zh_Hans: 已执行 SQL
+      pt_BR: Valid SQL
+    human_description:
+      en_US: The SQL that has passed validation and executed successfully.
+      zh_Hans: 已通过校验且成功执行的 SQL。
+      pt_BR: The SQL that has passed validation and executed successfully.
+    form: llm
+
+  - name: conversation_id
+    type: string
+    required: true
+    label:
+      en_US: Dify Conversation ID
+      zh_Hans: Dify 会话 ID
+      pt_BR: Dify Conversation ID
+    human_description:
+      en_US: The current Dify conversation ID used to isolate SQL memory.
+      zh_Hans: 用于隔离 SQL 记忆的当前 Dify conversation_id。
+      pt_BR: The current Dify conversation ID used to isolate SQL memory.
+    form: llm
+
+  - name: query_context
+    type: string
+    required: false
+    label:
+      en_US: Effective Query Context
+      zh_Hans: 有效查询上下文
+      pt_BR: Contexto efetivo da consulta
+    human_description:
+      en_US: JSON context resolved by the workflow and saved with the successful SQL memory.
+      zh_Hans: 工作流解析出的 JSON 有效查询上下文，将随成功 SQL 一起保存。
+      pt_BR: Contexto JSON resolvido pelo fluxo e salvo com a memoria SQL bem-sucedida.
+    form: llm
+
+extra:
+  python:
+    source: tools/commit_sql_memory.py

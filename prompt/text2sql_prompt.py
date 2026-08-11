@@ -82,7 +82,13 @@ Remember: Generate clean, executable SQL that directly answers the user's questi
 
     return system_prompt
 
-def _build_user_prompt(db_schema: str, question: str, example_info: str = None, conversation_history: list = None) -> str:
+def _build_user_prompt(
+    db_schema: str,
+    question: str,
+    example_info: str = None,
+    conversation_history: list = None,
+    query_context: str = None,
+) -> str:
     """
     构建预定义的user prompt
     
@@ -91,6 +97,7 @@ def _build_user_prompt(db_schema: str, question: str, example_info: str = None, 
         question: 用户问题
         example_info: 示例信息（可选），从示例知识库检索的内容
         conversation_history: 对话历史记录（可选），用于多轮对话上下文
+        query_context: 工作流已解析的有效查询上下文（可选）
     """
 
     # 构建对话历史部分
@@ -100,7 +107,11 @@ def _build_user_prompt(db_schema: str, question: str, example_info: str = None, 
     conversation_section = ""
     if conversation_history and len(conversation_history) > 0:
         conversation_section = ContextFormatter.format_conversation_history(conversation_history)
+    context_section = query_context.strip() if query_context and query_context.strip() else "{}"
     user_prompt = f"""Based on the information below, generate an accurate SQL query to answer the user's question:{question}
+【Effective Query Context - Highest Priority】
+{context_section}
+The effective query context has already resolved the current request and inherited filters. Apply every non-empty effective filter in it. Do not remove an inherited filter merely because the current question does not repeat it. Only use the current question to override a filter when it explicitly provides a replacement or clear instruction.
 【Database Schema】
 {db_schema}
 【Examples】

@@ -49,6 +49,7 @@ class UserContext:
     """用户上下文数据模型"""
     
     user_id: str
+    conversation_id: Optional[str] = None
     tool_name: str = "text2sql"
     conversations: List[Conversation] = field(default_factory=list)
     created_at: datetime = field(default_factory=datetime.now)
@@ -57,6 +58,8 @@ class UserContext:
     @property
     def context_key(self) -> str:
         """获取上下文键"""
+        if self.conversation_id:
+            return f"{self.user_id}:{self.conversation_id}:{self.tool_name}"
         return f"{self.user_id}:{self.tool_name}"
     
     def add_conversation(self, conversation: Conversation) -> None:
@@ -77,6 +80,7 @@ class UserContext:
         """转换为字典格式"""
         return {
             "user_id": self.user_id,
+            "conversation_id": self.conversation_id,
             "tool_name": self.tool_name,
             "conversations": [conv.to_dict() for conv in self.conversations],
             "created_at": self.created_at.timestamp(),
@@ -88,6 +92,7 @@ class UserContext:
         """从字典创建用户上下文实例"""
         user_context = cls(
             user_id=data.get("user_id", ""),
+            conversation_id=data.get("conversation_id"),
             tool_name=data.get("tool_name", "text2sql")
         )
         

@@ -122,6 +122,12 @@ print(result)
 | content | string | 是 | 要转换为SQL的自然语言问题 |
 | dialect | select | 是 | SQL方言（MySQL/PostgreSQL）|
 | top_k | number | 否 | 从知识库检索的结果数量（默认5）|
+| conversation_id | string | 多轮时建议填写 | 当前 Dify `conversation_id`，用于隔离 SQL 会话记忆 |
+| query_context | string | 否 | 工作流已解析的有效查询上下文 JSON，会作为 SQL 生成的最高优先级条件 |
+| memory_enabled | select | 否 | 是否让 Text2SQL 在生成阶段读取当前会话的 SQL 记忆 |
+| memory_window_size | number | 否 | Text2SQL 内部读取最近成功 SQL 的轮数（1-10）|
+
+多轮问数推荐使用“读取 SQL 记忆”和“提交 SQL 记忆”两个工具节点：只在 SQL 通过外部安全校验并成功执行后提交，避免失败 SQL 影响后续追问。接线说明见 [上下文记忆指南](./docs/CONTEXT_MEMORY_GUIDE.md)。
 
 ### 2. sql_executer 工具
 
@@ -264,6 +270,30 @@ print(result)
 | llm            | model-selector | 是   | 用于分析和生成图表的大语言模型                               |
 | sql_query        | string         | 是   | 查询的sql语句，用于推荐图表和字段                           |
 
+
+### 7. 读取 SQL 记忆工具
+
+**读取当前会话的成功 SQL 记忆** - 供工作流在意图解析、条件继承或 Text2SQL 前读取最近成功查询。
+
+| 参数名 | 类型 | 必填 | 描述 |
+|--------|------|------|------|
+| conversation_id | string | 是 | 当前 Dify `conversation_id`，与用户 ID 一起隔离记忆 |
+| memory_window_size | number | 否 | 返回最近成功 SQL 的轮数（1-10，默认 3）|
+
+输出包含历史问题、SQL 摘要、保存时的 `query_context` 和最近有效上下文。缺少会话标识时返回空历史，不会回退读取共享记忆。
+
+### 8. 提交 SQL 记忆工具
+
+**提交当前会话的成功 SQL 记忆** - 仅放在 SQL 合法性校验和 SQL 执行成功分支之后，将已成功执行的 SQL 写入当前会话。
+
+| 参数名 | 类型 | 必填 | 描述 |
+|--------|------|------|------|
+| query | string | 是 | 本轮用户问题 |
+| sql | string | 是 | 已通过校验且执行成功的 SQL |
+| conversation_id | string | 是 | 当前 Dify `conversation_id` |
+| query_context | string | 否 | 有效查询上下文 JSON，供后续追问继承条件 |
+
+不要把该工具连接到 SQL 生成完成即执行的分支，也不要在 SQL 校验失败、执行异常或空标识场景提交记忆。
 
 ---
 

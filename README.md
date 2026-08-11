@@ -124,6 +124,12 @@ print(result)
 | content | string | Yes | Natural language question to convert to SQL |
 | dialect | select | Yes | SQL dialect (MySQL/PostgreSQL/MSSQL/Oracle/DM) |
 | top_k | number | No | Number of results to retrieve from knowledge base (default 5) |
+| conversation_id | string | Recommended for multi-turn use | Current Dify `conversation_id`, used to isolate SQL session memory |
+| query_context | string | No | Effective query-context JSON resolved by the workflow and applied with highest priority |
+| memory_enabled | select | No | Whether Text2SQL reads SQL memory from the current session during generation |
+| memory_window_size | number | No | Number of recent successful SQL turns read internally by Text2SQL (1-10) |
+
+For multi-turn analytics, use the **Read SQL Memory** and **Commit SQL Memory** workflow tools. Commit memory only after external SQL validation and successful execution so failed SQL does not affect later follow-up questions. See the [context memory guide](./docs/CONTEXT_MEMORY_GUIDE.md).
 
 ### 2. sql_executer Tool
 
@@ -265,6 +271,30 @@ When `enable_refiner` is enabled, if the generated SQL execution fails, the syst
 | data | string | Yes | Data for visualization, supports JSON, CSV, or structured data |
 | llm | model-selector | Yes | Large language model for analysis and chart generation |
 | sql_query | string | Yes | SQL query statement used to recommend charts and fields |
+
+### 7. Read SQL Memory Tool
+
+**Read successful SQL memory for the current session** - Use before intent parsing, filter inheritance, or Text2SQL to retrieve recent successful queries.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| conversation_id | string | Yes | Current Dify `conversation_id`; combined with the user ID to isolate memory |
+| memory_window_size | number | No | Number of recent successful SQL turns to return (1-10, default 3) |
+
+The output includes historical questions, SQL summaries, saved `query_context`, and the latest effective context. Missing identity returns an empty history and never falls back to shared memory.
+
+### 8. Commit SQL Memory Tool
+
+**Persist successful SQL for the current session** - Place only after the SQL validation and SQL execution success branch.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| query | string | Yes | Original user question |
+| sql | string | Yes | SQL that passed validation and executed successfully |
+| conversation_id | string | Yes | Current Dify `conversation_id` |
+| query_context | string | No | Effective query-context JSON for later filter inheritance |
+
+Do not connect this tool immediately after SQL generation, or after validation failures, execution exceptions, or missing session identity.
 
 ---
 

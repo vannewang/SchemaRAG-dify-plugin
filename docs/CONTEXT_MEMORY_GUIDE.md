@@ -1,307 +1,190 @@
-# Text2SQL 上下文记忆功能使用指南
+# Text2SQL 会话记忆使用指南
 
 ## 概述
 
-Text2SQL工具现在支持多轮对话记忆功能，可以记住之前的对话历史，实现更智能的上下文理解和SQL生成。
+SchemaRAG 的 SQL 记忆采用“两阶段”流程：先读取当前 Dify 会话中已经成功执行的 SQL，再只把通过外部 SQL 合法性校验且执行成功的 SQL 提交到记忆。
 
-## 功能特性
+这个设计避免生成失败、校验失败或执行异常的 SQL 影响后续追问。
 
-### 1. 多轮对话记忆
-- 自动记录每次对话的问题和生成的SQL
-- 支持可配置的记忆窗口大小（1-10轮）
-- 基于用户ID实现多用户隔离
+## 核心规则
 
-### 2. 智能上下文理解
-- 当用户问题引用之前的查询时，系统会自动加载历史对话
-- LLM可以基于历史上下文生成更准确的SQL
+- 记忆键由 `runtime.user_id + conversation_id + text2sql` 组成。同一 API 固定用户 ID 下，不同 Dify `conversation_id` 不共享记忆。
+- `read_sql_memory` 只读取已提交的成功 SQL；缺少用户 ID 或 `conversation_id` 时返回空历史，不会回退到共享记忆。
+- `commit_sql_memory` 只应连接到 SQL 成功分支。不要在 Text2SQL 生成完成、SQL 校验失败或 SQL 执行异常后提交。
+- `query_context` 必须是 JSON 对象字符串。它保存当前轮已解析、已继承的业务对象和筛选条件，供后续追问使用。
+- 当前实现使用内存存储，默认清理 24 小时未访问的上下文；记忆窗口默认返回最近 3 轮，最大 10 轮。
 
-### 3. 灵活的记忆控制
-- 可以随时启用/禁用记忆功能
-- 支持重置记忆，清除所有历史对话
-- 自动过期清理，防止内存泄漏
+## 工具说明
 
-## 参数说明
+### 读取 SQL 记忆
 
-### memory_enabled (启用记忆功能)
-- **类型**: boolean
-- **必填**: 否
-- **默认值**: false
-- **说明**: 是否启用上下文记忆功能。设置为true时，系统会记住历史对话。
+工具名：`read_sql_memory`
 
-### memory_window_size (记忆窗口大小)
-- **类型**: number
-- **必填**: 否
-- **默认值**: 3
-- **范围**: 1-10
-- **说明**: 记住最近几轮对话的数量。数值越大，记忆的历史越多，但也会占用更多的token。
+| 参数 | 必填 | 说明 |
+| --- | --- | --- |
+| `conversation_id` | 是 | 绑定 Dify `sys.conversation_id` |
+| `memory_window_size` | 否 | 返回最近成功 SQL 的轮数，范围 1-10，默认 3 |
 
-### reset_memory (重置记忆)
-- **类型**: boolean
-- **必填**: 否
-- **默认值**: false
-- **说明**: 是否清除当前用户的所有对话历史。设置为true时会清空记忆，适合开始新的对话主题。
+输出为 JSON 字符串，包含：
+
+```json
+{
+  "conversation_id": "...",
+  "history_turns": 2,
+  "history": [
+    {
+      "query": "近一周的告警趋势",
+      "sql": "SELECT ...",
+      "query_context": {}
+    }
+  ],
+  "latest_context": {}
+}
+```
+
+`history` 用于意图解析或条件继承，`latest_context` 适合快速读取上一轮有效条件。SQL 以摘要形式返回，工作流应优先使用保存的结构化 `query_context`，而不是依赖 SQL 文本猜测条件。
+
+### 提交 SQL 记忆
+
+工具名：`commit_sql_memory`
+
+| 参数 | 必填 | 说明 |
+| --- | --- | --- |
+| `query` | 是 | 原始用户问题，通常绑定 `sys.query` |
+| `sql` | 是 | 已通过校验并成功执行的 SQL |
+| `conversation_id` | 是 | 绑定 Dify `sys.conversation_id` |
+| `query_context` | 否 | 本轮有效查询上下文 JSON 字符串 |
+
+提交成功后，日志会记录会话标识与当前记忆轮数。问题和 SQL 日志仅保留截断摘要，生产环境仍应按日志管理要求保护访问权限。
+
+## 推荐工作流
+
+```text
+开始
+  ↓
+读取 SQL 记忆
+  ↓
+查询上下文解析 / 意图解析
+  ↓
+有效查询上下文构建
+  ↓
+Text2SQL
+  ↓
+SQL 合法性校验
+  ↓
+SQL 是否安全
+  ├─ 否 -> 拦截回复
+  └─ 是
+      ↓
+    SQL 执行器
+      ↓
+    SQL 执行结果是否正常
+      ├─ 否 -> SQL 异常处理
+      └─ 是
+          ↓
+        提交 SQL 记忆
+          ↓
+        数据总结 / 页面链接 / 图表
+```
+
+### 节点绑定建议
+
+| 节点 | 参数 | 建议绑定 |
+| --- | --- | --- |
+| 读取 SQL 记忆 | `conversation_id` | `sys.conversation_id` |
+| Text2SQL | `content` | `sys.query` |
+| Text2SQL | `conversation_id` | `sys.conversation_id` |
+| Text2SQL | `query_context` | 有效查询上下文构建节点输出的 JSON 字符串 |
+| 提交 SQL 记忆 | `query` | `sys.query` |
+| 提交 SQL 记忆 | `sql` | SQL 安全校验后的安全 SQL |
+| 提交 SQL 记忆 | `conversation_id` | `sys.conversation_id` |
+| 提交 SQL 记忆 | `query_context` | 有效查询上下文构建节点输出的 JSON 字符串 |
+
+若工作流已经使用“读取 SQL 记忆 -> 查询上下文解析”构建了完整 `query_context`，Text2SQL 的 `memory_enabled` 可按需要开启或关闭：开启时会额外把最近成功 SQL 注入 Text2SQL 提示词；关闭时仅依赖工作流传入的结构化上下文，提示词更短、行为更确定。
+
+## 查询上下文
+
+`query_context` 应由工作流代码节点或结构化输出节点生成，例如：
+
+```json
+{
+  "schema_version": "1.0",
+  "intent_type": "data_query",
+  "subject": "alarm",
+  "effective_time": {
+    "has_time_filter": true,
+    "start_ts": "2026-08-03 00:00:00",
+    "end_ts": "2026-08-10 00:00:00",
+    "source": "history"
+  },
+  "entities": {
+    "algorithm_id": "101",
+    "algorithm_name": "未带安全帽"
+  }
+}
+```
+
+Text2SQL 将此上下文作为高优先级条件：非空的有效条件需要应用到 SQL；只有用户本轮明确替换或清除条件时才可覆盖。不要传入普通文本、Markdown 或不完整 JSON。
 
 ## 使用场景
 
-### 场景1：连续查询细化
-```
-用户: 查询所有用户
-系统: SELECT * FROM users
+### 连续筛选
 
-用户: 只要活跃用户
-系统: SELECT * FROM users WHERE status = 'active'
-
-用户: 按注册日期排序
-系统: SELECT * FROM users WHERE status = 'active' ORDER BY created_at DESC
+```text
+第一轮：近一周的告警趋势
+第二轮：这些告警都是啥算法的？
+第三轮：未带安全帽有多少条，分别是什么时候的？
 ```
 
-### 场景2：数据分析深入
-```
-用户: 查询上个月的销售额
-系统: SELECT SUM(amount) FROM orders WHERE created_at >= DATE_SUB(NOW(), INTERVAL 1 MONTH)
+第一轮成功执行后保存时间范围；第二轮继承时间范围并查询算法；第三轮继承时间范围，同时增加算法条件。
 
-用户: 按产品类别分组
-系统: SELECT category, SUM(amount) FROM orders WHERE created_at >= DATE_SUB(NOW(), INTERVAL 1 MONTH) GROUP BY category
+### 新主题
 
-用户: 显示前10名
-系统: SELECT category, SUM(amount) as total FROM orders WHERE created_at >= DATE_SUB(NOW(), INTERVAL 1 MONTH) GROUP BY category ORDER BY total DESC LIMIT 10
-```
+开始完全独立的话题时，优先使用新的 Dify 会话。新的 `conversation_id` 会自然隔离 SQL 记忆，不会读取原会话的历史。
 
-### 场景3：表关联查询
-```
-用户: 查询用户信息
-系统: SELECT * FROM users
+## 日志排查
 
-用户: 关联他们的订单
-系统: SELECT u.*, o.* FROM users u LEFT JOIN orders o ON u.id = o.user_id
+可在 Dify `plugin_daemon` 日志中检索：
 
-用户: 只要有订单的用户
-系统: SELECT u.*, o.* FROM users u INNER JOIN orders o ON u.id = o.user_id
-```
+| 日志标记 | 含义 |
+| --- | --- |
+| `SQL_MEMORY_CONTEXT_READ_START` | 开始读取当前会话记忆 |
+| `SQL_MEMORY_CONTEXT_READ_SUCCESS` | 已读取历史轮数和最近上下文状态 |
+| `SQL_MEMORY_READ_RESULT` | Text2SQL 内部读取记忆的结果 |
+| `SQL_MEMORY_PROMPT_INJECTED` | 最近成功 SQL 已注入 Text2SQL 提示词 |
+| `SQL_MEMORY_COMMIT_START` | 成功分支开始提交记忆 |
+| `SQL_MEMORY_COMMIT_SUCCESS` | 提交完成，包含当前记忆轮数 |
 
-## 最佳实践
-
-### 1. 何时启用记忆功能
-
-**适合启用的场景**:
-- 需要多次细化同一个查询
-- 进行数据分析时的连续探索
-- 构建复杂查询的过程
-- 用户可能引用之前的结果
-
-**不适合启用的场景**:
-- 独立的、不相关的查询
-- 一次性的简单查询
-- 需要完全独立上下文的查询
-
-### 2. 选择合适的窗口大小
-
-- **窗口大小 1-2**: 适合简单的连续细化，节省token
-- **窗口大小 3-5**: 平衡性能和上下文，适合大多数场景（推荐）
-- **窗口大小 6-10**: 适合复杂的多步骤分析，但会消耗更多token
-
-### 3. 及时重置记忆
-
-在以下情况应该重置记忆:
-- 开始新的查询主题时
-- 切换到不同的数据库或表时
-- 之前的上下文已经不再相关时
-- 发现生成的SQL受到错误历史影响时
-
-## 技术架构
-
-### 模块结构
-
-```
-service/context/
-├── __init__.py              # 模块导出
-├── models.py                # 数据模型（Conversation, UserContext）
-├── storage.py               # 存储层（MemoryContextStorage）
-└── context_manager.py       # 核心管理器（ContextManager）
-
-prompt/components/
-├── __init__.py
-└── context_formatter.py     # 上下文格式化组件
-```
-
-### 核心组件
-
-#### 1. ContextManager
-负责高级别的上下文操作:
-- 获取和保存对话历史
-- 管理用户上下文
-- 自动清理过期数据
-
-#### 2. ContextStorage
-抽象存储层，支持不同的存储后端:
-- 当前实现: MemoryContextStorage（内存存储）
-- 可扩展: RedisContextStorage, DatabaseContextStorage等
-
-#### 3. Conversation & UserContext
-数据模型:
-- Conversation: 单轮对话（问题+SQL+元数据）
-- UserContext: 用户上下文（用户ID+对话列表+时间戳）
-
-#### 4. ContextFormatter
-格式化组件:
-- 将对话历史格式化为提示词片段
-- 智能判断是否需要包含上下文
-
-### 数据流程
-
-```
-1. 用户提问
-   ↓
-2. 检查是否启用记忆 & 不是重置操作
-   ↓
-3. 从ContextManager获取历史对话
-   ↓
-4. ContextFormatter格式化历史为提示词
-   ↓
-5. 构建完整的system prompt
-   ↓
-6. 调用LLM生成SQL
-   ↓
-7. 如果启用记忆，保存本轮对话到ContextManager
-```
-
-## 性能考虑
-
-### 内存管理
-- 使用类级别的共享存储实例，避免重复创建
-- 自动清理24小时未访问的上下文
-- 每小时执行一次自动清理
-
-### Token优化
-- 历史对话只包含问题和SQL，不包含其他元数据
-- 可配置的窗口大小控制历史长度
-- 智能判断是否需要包含上下文（基于关键词检测）
-
-### 线程安全
-- 使用可重入锁（RLock）保护共享数据
-- 支持并发访问和修改
-- 无竞态条件
-
-## 示例代码
-
-### 基本使用
-```python
-from service.context import ContextManager
-
-# 创建上下文管理器
-cm = ContextManager()
-
-# 添加对话
-cm.add_conversation(
-    query="查询所有用户",
-    sql="SELECT * FROM users",
-    user_id="user_123",
-    metadata={"dialect": "mysql"}
-)
-
-# 获取历史
-history = cm.get_conversation_history(
-    user_id="user_123",
-    window_size=3
-)
-
-# 重置记忆
-cm.reset_memory(user_id="user_123")
-```
-
-### 在Tool中使用
-```python
-# 获取历史（如果启用）
-conversation_history = []
-if memory_enabled and not reset_memory:
-    conversation_history = self._context_manager.get_conversation_history(
-        user_id=user_id,
-        window_size=memory_window_size
-    )
-
-# 构建带上下文的prompt
-system_prompt = text2sql_prompt._build_system_prompt(
-    dialect, schema_info, content, 
-    custom_prompt, example_info, conversation_history
-)
-
-# 保存本轮对话
-if memory_enabled and generated_sql:
-    self._context_manager.add_conversation(
-        query=content,
-        sql=generated_sql,
-        user_id=user_id,
-        metadata={"dialect": dialect}
-    )
-```
-
-## 故障排除
-
-### 问题1: 生成的SQL不正确且似乎受到历史影响
-**解决方案**: 
-- 设置 `reset_memory=true` 清除历史
-- 检查 `memory_window_size` 是否过大
-- 确认历史对话的SQL是否正确
-
-### 问题2: 系统没有使用历史上下文
-**解决方案**:
-- 确认 `memory_enabled=true`
-- 确认没有设置 `reset_memory=true`
-- 检查用户ID是否一致
-- 查看日志确认是否加载了历史
-
-### 问题3: 内存占用过高
-**解决方案**:
-- 减小 `memory_window_size`
-- 增加重置记忆的频率
-- 检查是否有大量不同的用户ID
+排查时核对同一请求中的 `conversation_id` 是否一致；`runtime_session_id` 仅用于日志辅助观察，不能替代 Dify `conversation_id` 作为记忆隔离键。
 
 ## 测试
 
-运行测试验证功能:
+运行上下文管理测试：
 
-```bash
+```powershell
+$env:PYTHONIOENCODING='utf-8'
 python test/test_context_manager.py
 ```
 
-测试包括:
-- 基本上下文操作
-- 多用户隔离
-- 记忆窗口大小
-- 数据模型序列化
+当前测试覆盖基本上下文操作、多用户隔离、固定用户 ID 下不同 Dify 会话隔离、记忆窗口和模型序列化。
 
-## 未来扩展
+## 常见问题
 
-### 计划中的功能
-1. **持久化存储**: 支持Redis/Database作为存储后端
-2. **上下文压缩**: 自动总结长历史为简短描述
-3. **智能上下文选择**: 基于语义相似度选择相关历史
-4. **跨会话记忆**: 支持跨多个会话的长期记忆
-5. **上下文分析**: 提供上下文使用统计和分析
+### 为什么没有读取到历史？
 
-### 扩展存储后端示例
+- 确认当前请求已携带非空的 `sys.conversation_id`；
+- 确认前一轮 SQL 通过校验并走到了“提交 SQL 记忆”成功节点；
+- 确认读取和提交节点绑定的是同一个 `conversation_id`；
+- 检查 `SQL_MEMORY_CONTEXT_READ_SUCCESS` 日志中的 `history_turns`。
 
-```python
-# Redis存储后端示例
-class RedisContextStorage(ContextStorage):
-    def __init__(self, redis_client):
-        self.redis = redis_client
-    
-    def get_context(self, context_key: str) -> Optional[UserContext]:
-        data = self.redis.get(context_key)
-        if data:
-            return UserContext.from_dict(json.loads(data))
-        return None
-    
-    def save_context(self, user_context: UserContext) -> bool:
-        self.redis.set(
-            user_context.context_key,
-            json.dumps(user_context.to_dict()),
-            ex=86400  # 24小时过期
-        )
-        return True
-```
+### 为什么追问没有继承时间或实体条件？
 
-## 总结
+- 优先检查提交时保存的 `query_context` 是否为完整 JSON；
+- 检查查询上下文解析节点是否将 `latest_context` 或 `history` 作为输入；
+- 不要仅依赖 SQL 文本摘要解析条件。
 
-上下文记忆功能为Text2SQL工具带来了智能的多轮对话能力，使其能够更好地理解用户意图，生成更准确的SQL查询。通过合理配置和使用，可以大大提升用户体验和查询效率。
+### 为什么 SQL 没有进入记忆？
+
+- SQL 校验失败、执行异常或未进入成功分支时，设计上不会提交记忆；
+- 缺少用户 ID 或 `conversation_id` 时，提交节点会跳过写入；
+- 确认提交节点使用的是校验后的 SQL，而不是空变量。

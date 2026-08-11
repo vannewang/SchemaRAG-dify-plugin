@@ -121,6 +121,65 @@ def test_multiple_users():
     print("=" * 50)
 
 
+def test_conversation_isolation():
+    """测试同一用户不同 Dify 会话之间不会共享记忆"""
+    print("\n" + "=" * 50)
+    print("测试会话记忆隔离")
+    print("=" * 50)
+
+    cm = ContextManager()
+    user_id = "fixed_api_user"
+
+    cm.add_conversation(
+        query="会话一的问题",
+        sql="SELECT 1",
+        user_id=user_id,
+        conversation_id="conversation_1",
+        metadata={
+            "query_context": {
+                "subject": "alarm",
+                "effective_time": {
+                    "has_time_filter": True,
+                    "start_ts": "2026-08-03 00:00:00",
+                    "end_ts": "2026-08-10 00:00:00",
+                },
+            }
+        },
+    )
+    cm.add_conversation(
+        query="会话二的问题",
+        sql="SELECT 2",
+        user_id=user_id,
+        conversation_id="conversation_2",
+    )
+
+    history_1 = cm.get_conversation_history(
+        user_id=user_id,
+        conversation_id="conversation_1",
+    )
+    history_2 = cm.get_conversation_history(
+        user_id=user_id,
+        conversation_id="conversation_2",
+    )
+
+    assert len(history_1) == 1, "会话一应只读取自己的记忆"
+    assert len(history_2) == 1, "会话二应只读取自己的记忆"
+    assert cm.get_conversation_count(user_id=user_id, conversation_id="conversation_1") == 1
+    assert cm.get_conversation_count(user_id=user_id, conversation_id="conversation_2") == 1
+    assert history_1[0]["sql"] == "SELECT 1", "会话一不应读取会话二 SQL"
+    assert history_2[0]["sql"] == "SELECT 2", "会话二不应读取会话一 SQL"
+    assert history_1[0]["metadata"]["query_context"]["subject"] == "alarm"
+    assert history_1[0]["metadata"]["query_context"]["effective_time"]["has_time_filter"] is True
+
+    cm.reset_memory(user_id=user_id, conversation_id="conversation_1")
+    assert not cm.get_conversation_history(user_id=user_id, conversation_id="conversation_1")
+    assert cm.get_conversation_count(user_id=user_id, conversation_id="conversation_1") == 0
+    assert len(cm.get_conversation_history(user_id=user_id, conversation_id="conversation_2")) == 1
+
+    print("✓ 固定用户ID下的不同会话已正确隔离")
+    print("=" * 50)
+
+
 def test_window_size():
     """测试记忆窗口大小"""
     print("\n" + "=" * 50)
@@ -189,6 +248,7 @@ if __name__ == "__main__":
     try:
         test_basic_context_operations()
         test_multiple_users()
+        test_conversation_isolation()
         test_window_size()
         test_conversation_model()
         

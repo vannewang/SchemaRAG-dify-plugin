@@ -89,7 +89,7 @@ docker compose up -d
 4. 上传：
 
 ```text
-schemarag-plugin-0.1.6.2.difypkg
+schemarag-plugin-<version>.difypkg
 ```
 
 5. 安装成功后，在工具供应商或内置工具列表中应能看到：
@@ -243,14 +243,18 @@ b247c284-2abf-4879-9b26-86e062bb01b2
 | Retrieval Method | 否 | 建议先用 `semantic_search` 或 `hybrid_search` |
 | 自定义指令 | 否 | 用于约束 SQL 生成规则 |
 | 示例知识库 ID | 否 | 放 SQL 示例或问法示例，初期可留空 |
-| Enable Memory | 否 | 多轮问数时可开启 |
-| Reset Memory | 否 | 需要清空上下文时设置为 `true` |
+| Dify Conversation ID | 多轮时建议填写 | 绑定 `sys.conversation_id`，用于隔离 SQL 会话记忆 |
+| Effective Query Context | 否 | 绑定工作流构建的有效查询上下文 JSON |
+| Enable Memory | 否 | 是否在 Text2SQL 内部读取当前会话的最近成功 SQL |
+| Reset Memory | 否 | 单节点记忆模式下需要清空上下文时设置为 `true` |
 
 重点说明：
 
 - Text2SQL 节点里的“知识库 ID”是运行时真正用于 schema 检索的知识库。
 - API 授权配置生成的知识库 ID 不会自动回填到 Text2SQL 节点。
 - 如果两个 ID 不一致，Text2SQL 会检索节点里配置的旧知识库。
+- 多轮流程应使用 Dify `conversation_id` 隔离记忆，不要使用运行时临时 `session_id`。
+- `query_context` 必须是 JSON 对象字符串；它应包含本轮已确认或从历史继承的筛选条件。
 
 示例：
 
@@ -289,6 +293,20 @@ SQL 是否安全条件判断
   ├─ 安全 -> SQL Executer
   └─ 不安全 -> 拦截回复
 ```
+
+### 9.1 配置 SQL 会话记忆
+
+需要多轮追问时，使用插件提供的 `Read SQL Memory` 和 `Commit SQL Memory` 工具。
+
+1. 在 Text2SQL 之前添加 `Read SQL Memory`，将 `conversation_id` 绑定为 `sys.conversation_id`。
+2. 将读取结果输入工作流的意图解析或查询上下文构建节点，生成结构化 `query_context`。
+3. 将同一个 `conversation_id` 和 `query_context` 绑定到 Text2SQL。
+4. 仅在 SQL 安全校验通过且 SQL Executer 成功后添加 `Commit SQL Memory`。
+5. 提交节点的 `query` 绑定 `sys.query`，`sql` 绑定安全校验后的 SQL，`query_context` 绑定本轮有效上下文。
+
+不要把 `Commit SQL Memory` 连接到 Text2SQL 的直接输出，也不要连接到 SQL 校验失败或执行异常分支。这样失败 SQL 不会进入后续追问上下文。
+
+更多字段说明、日志标记和排查方式见 [Text2SQL 会话记忆使用指南](./CONTEXT_MEMORY_GUIDE.md)。
 
 建议安全策略：
 
@@ -500,6 +518,10 @@ Task ... succeeded
 ```text
 开始
   ↓
+Read SQL Memory
+  ↓
+意图解析 / 有效查询上下文构建
+  ↓
 Text2SQL
   ↓
 SQL 安全校验
@@ -510,7 +532,11 @@ SQL 是否安全
       ↓
     SQL Executer
       ↓
-    Data Summary
+    SQL 执行结果是否正常
+      ├─ 否 -> SQL 异常处理
+      └─ 是 -> Commit SQL Memory
+          ↓
+        Data Summary
       ↓
     图表数据预处理
       ↓

@@ -1,0 +1,48 @@
+identity:
+  name: read_sql_memory
+  author: joto
+  label:
+    en_US: Read SQL Memory
+    zh_Hans: 读取 SQL 记忆
+    pt_BR: Ler memoria SQL
+
+description:
+  human:
+    en_US: Read successfully executed SQL memory for the current Dify conversation.
+    zh_Hans: 读取当前 Dify 会话中已成功执行的 SQL 记忆。
+    pt_BR: Ler a memoria SQL executada com sucesso da conversa atual do Dify.
+  llm: Read successfully executed SQL memory for the current Dify conversation.
+
+parameters:
+  - name: conversation_id
+    type: string
+    required: true
+    label:
+      en_US: Dify Conversation ID
+      zh_Hans: Dify 会话 ID
+      pt_BR: ID da conversa Dify
+    human_description:
+      en_US: The current Dify conversation ID used to isolate SQL memory.
+      zh_Hans: 用于隔离 SQL 记忆的当前 Dify conversation_id。
+      pt_BR: O ID da conversa Dify atual usado para isolar a memoria SQL.
+    form: llm
+
+  - name: memory_window_size
+    type: number
+    required: false
+    label:
+      en_US: Memory Window Size
+      zh_Hans: 记忆窗口大小
+      pt_BR: Tamanho da janela de memoria
+    human_description:
+      en_US: Number of recent successful SQL queries to return.
+      zh_Hans: 返回最近成功 SQL 查询的轮数。
+      pt_BR: Numero de consultas SQL recentes bem-sucedidas a retornar.
+    form: form
+    default: 3
+    min: 1
+    max: 10
+
+extra:
+  python:
+    source: tools/read_sql_memory.py

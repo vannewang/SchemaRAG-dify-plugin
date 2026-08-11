@@ -185,6 +185,8 @@ tools:
   - tools/text2data.yaml
   - tools/sql_executer.yaml
   - tools/sql_executer_cust.yaml
+  - tools/commit_sql_memory.yaml
+  - tools/read_sql_memory.yaml
   - tools/data_summary.yaml
   - tools/llm_plot.yaml
   - tools/llm_plot_lite.yaml

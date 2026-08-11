@@ -2,6 +2,7 @@ from collections.abc import Generator
 from typing import Any, Tuple, Union, List, Dict, Optional
 import sys
 import os
+import json
 import logging
 from prompt import text2sql_prompt
 from service.knowledge_service import KnowledgeService
@@ -33,6 +34,8 @@ class Text2SQLTool(Tool):
     DEFAULT_RETRIEVAL_MODEL = "semantic_search"
     MAX_CONTENT_LENGTH = 10000  # 最大输入内容长度
     DEFAULT_MEMORY_WINDOW = 3   # 默认记忆窗口大小
+    MEMORY_LOG_SUMMARY_LENGTH = 240
+    MAX_QUERY_CONTEXT_LENGTH = 16000
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -100,6 +103,44 @@ class Text2SQLTool(Tool):
         """
         return CacheConfig.get_summary()
 
+    @classmethod
+    def _summarize_memory_log_value(cls, value: Any) -> str:
+        """压缩并截断日志中的问题或 SQL，避免日志过长。"""
+        normalized = " ".join(str(value or "").split())
+        if len(normalized) <= cls.MEMORY_LOG_SUMMARY_LENGTH:
+            return normalized
+        return f"{normalized[:cls.MEMORY_LOG_SUMMARY_LENGTH]}..."
+
+    @staticmethod
+    def _normalize_query_context_for_cache(query_context: str) -> str:
+        """将有效查询上下文标准化后纳入缓存键，避免跨上下文复用 SQL。"""
+        if not query_context:
+            return ""
+        try:
+            parsed = json.loads(query_context)
+            return json.dumps(parsed, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        except (TypeError, ValueError):
+            return " ".join(query_context.split())
+
+    @staticmethod
+    def _query_context_log_fields(query_context: str) -> tuple[str, str, bool, str, str]:
+        """提取有效上下文中的关键字段，用于确认条件继承是否生效。"""
+        try:
+            context = json.loads(query_context) if query_context else {}
+        except (TypeError, ValueError):
+            context = {}
+        if not isinstance(context, dict):
+            context = {}
+        time_value = context.get("effective_time")
+        time_value = time_value if isinstance(time_value, dict) else {}
+        return (
+            str(context.get("subject") or "unknown"),
+            str(time_value.get("source") or "none"),
+            bool(time_value.get("has_time_filter")),
+            str(time_value.get("start_ts") or ""),
+            str(time_value.get("end_ts") or ""),
+        )
+
     def _invoke(self, tool_parameters: dict[str, Any]) -> Generator[ToolInvokeMessage]:
         """
         Convert natural language questions to SQL queries using database schema knowledge base
@@ -126,13 +167,58 @@ class Text2SQLTool(Tool):
             (dataset_id, llm_model, content, dialect, top_k, retrieval_model, 
              custom_prompt, example_dataset_id, memory_enabled, memory_window_size, reset_memory, cache_enabled) = params_result
             
-            # 获取用户ID用于上下文管理
+            # 会话记忆必须使用工作流传入的真实 conversation_id，不能使用运行时临时 session_id。
             user_id = self.runtime.user_id
+            conversation_id = str(tool_parameters.get("conversation_id") or "").strip()
+            query_context = str(tool_parameters.get("query_context") or "").strip()
+            if len(query_context) > self.MAX_QUERY_CONTEXT_LENGTH:
+                raise ValueError("有效查询上下文内容过长")
+            context_subject, time_source, has_time_filter, effective_start_ts, effective_end_ts = self._query_context_log_fields(query_context)
+            runtime_session_id = self.runtime.session_id
+            self.logger.info(
+                "SQL_MEMORY_READ_START user_id=%r conversation_id=%r "
+                "runtime_session_id=%r memory_enabled=%s memory_window_size=%s reset_memory=%s",
+                user_id,
+                conversation_id,
+                runtime_session_id,
+                memory_enabled,
+                memory_window_size,
+                reset_memory,
+            )
+            self.logger.info(
+                "SQL_MEMORY_EFFECTIVE_CONTEXT conversation_id=%r present=%s length=%s "
+                "subject=%r time_source=%r has_time_filter=%s start_ts=%r end_ts=%r",
+                conversation_id,
+                bool(query_context),
+                len(query_context),
+                context_subject,
+                time_source,
+                has_time_filter,
+                effective_start_ts,
+                effective_end_ts,
+            )
+
+            if memory_enabled and not (user_id and conversation_id):
+                self.logger.warning(
+                    "SQL_MEMORY_DISABLED reason=missing_identity user_id=%r conversation_id=%r",
+                    user_id,
+                    conversation_id,
+                )
+                memory_enabled = False
+            elif not memory_enabled:
+                self.logger.info("SQL_MEMORY_DISABLED reason=parameter_disabled")
             
             # 如果需要重置记忆
-            if reset_memory:
-                self.logger.info(f"重置用户记忆，用户ID: {user_id}")
-                self._context_manager.reset_memory(user_id)
+            if memory_enabled and reset_memory:
+                reset_success = self._context_manager.reset_memory(
+                    user_id=user_id,
+                    conversation_id=conversation_id,
+                )
+                self.logger.info(
+                    "SQL_MEMORY_RESET conversation_id=%r success=%s",
+                    conversation_id,
+                    reset_success,
+                )
 
             # 步骤1: 从知识库检索相关的schema信息
             self.logger.info(
@@ -165,10 +251,26 @@ class Text2SQLTool(Tool):
             if memory_enabled and not reset_memory:
                 conversation_history = self._context_manager.get_conversation_history(
                     user_id=user_id,
+                    conversation_id=conversation_id,
                     window_size=memory_window_size
                 )
-                if conversation_history:
-                    self.logger.info(f"加载了 {len(conversation_history)} 轮历史对话")
+                self.logger.info(
+                    "SQL_MEMORY_READ_RESULT conversation_id=%r history_turns=%s",
+                    conversation_id,
+                    len(conversation_history),
+                )
+                for index, history_item in enumerate(conversation_history, start=1):
+                    self.logger.info(
+                        "SQL_MEMORY_HISTORY_ITEM conversation_id=%r index=%s query=%r sql=%r",
+                        conversation_id,
+                        index,
+                        self._summarize_memory_log_value(history_item.get("query")),
+                        self._summarize_memory_log_value(history_item.get("sql")),
+                    )
+            elif reset_memory:
+                self.logger.info("SQL_MEMORY_PROMPT_SKIPPED reason=reset_memory")
+            else:
+                self.logger.info("SQL_MEMORY_PROMPT_SKIPPED reason=memory_disabled")
             
             # 步骤4: 构建预定义的prompt（包含自定义提示、示例和对话历史）
             system_prompt = text2sql_prompt._build_system_prompt(
@@ -178,8 +280,27 @@ class Text2SQLTool(Tool):
                 db_schema=schema_info,
                 question=content,
                 example_info=example_info,
-                conversation_history=conversation_history
+                conversation_history=conversation_history,
+                query_context=query_context,
             )
+            history_character_count = 0
+            if conversation_history:
+                history_character_count = sum(
+                    len(str(item.get("query") or "")) + len(str(item.get("sql") or ""))
+                    for item in conversation_history
+                )
+                self.logger.info(
+                    "SQL_MEMORY_PROMPT_READY conversation_id=%r history_turns=%s "
+                    "history_character_count=%s",
+                    conversation_id,
+                    len(conversation_history),
+                    history_character_count,
+                )
+            elif memory_enabled and not reset_memory:
+                self.logger.info(
+                    "SQL_MEMORY_PROMPT_SKIPPED reason=empty_history conversation_id=%r",
+                    conversation_id,
+                )
             
             # 步骤4.5: 检查SQL缓存（如果启用缓存且未重置记忆）
             cache_key = None
@@ -191,7 +312,8 @@ class Text2SQLTool(Tool):
                         "dialect": dialect,
                         "query": normalize_query(content),
                         "dataset_id": dataset_id,
-                        "custom_prompt": custom_prompt[:50] if custom_prompt else ""  # 只取前50字符
+                        "custom_prompt": custom_prompt[:50] if custom_prompt else "",  # 只取前50字符
+                        "query_context": self._normalize_query_context_for_cache(query_context),
                     }
                 )
                 
@@ -199,26 +321,27 @@ class Text2SQLTool(Tool):
                 cached_sql = self._sql_cache.get(cache_key)
                 if cached_sql:
                     self.logger.info("SQL缓存命中，直接返回缓存的SQL")
-                    yield self.create_text_message(text=cached_sql)
-                    
-                    # 如果启用了记忆，仍然需要保存对话
-                    if memory_enabled:
-                        self._context_manager.add_conversation(
-                            query=content,
-                            sql=cached_sql,
-                            user_id=user_id,
-                            metadata={
-                                "dialect": dialect,
-                                "dataset_id": dataset_id,
-                                "from_cache": True
-                            }
+                    if conversation_history:
+                        self.logger.info(
+                            "SQL_MEMORY_NOT_APPLIED reason=sql_cache_hit conversation_id=%r "
+                            "history_turns=%s",
+                            conversation_id,
+                            len(conversation_history),
                         )
-                        self.logger.debug(f"已保存缓存SQL到上下文，用户: {user_id}")
+                    yield self.create_text_message(text=cached_sql)
                     
                     return
             
             # 步骤5: 缓存未命中，调用LLM生成SQL
             self.logger.info("SQL缓存未命中，开始调用LLM生成SQL查询")
+            if conversation_history:
+                self.logger.info(
+                    "SQL_MEMORY_PROMPT_INJECTED conversation_id=%r history_turns=%s "
+                    "history_character_count=%s",
+                    conversation_id,
+                    len(conversation_history),
+                    history_character_count,
+                )
 
             response = self.session.model.llm.invoke(
                 model_config=llm_model,
@@ -266,18 +389,7 @@ class Text2SQLTool(Tool):
                 self._sql_cache.set(cache_key, generated_sql, ttl=7200)  # 2小时过期
                 self.logger.debug(f"已缓存生成的SQL，键: {cache_key}")
             
-            # 步骤6: 如果启用了记忆功能，保存对话到上下文
-            if memory_enabled and generated_sql:
-                self._context_manager.add_conversation(
-                    query=content,
-                    sql=generated_sql,
-                    user_id=user_id,
-                    metadata={
-                        "dialect": dialect,
-                        "dataset_id": dataset_id
-                    }
-                )
-                self.logger.debug(f"已保存对话到上下文，用户: {user_id}")
+            # SQL 是否可进入记忆由工作流执行成功分支的提交节点决定。
 
         except ValueError as e:
             self.logger.error(f"参数验证错误: {str(e)}")

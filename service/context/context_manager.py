@@ -61,13 +61,19 @@ class ContextManager:
         # 生成匿名用户ID
         return f"anon_{uuid.uuid4().hex[:8]}"
     
-    def get_context(self, user_id: Optional[str] = None, tool_name: str = "text2sql") -> UserContext:
+    def get_context(
+        self,
+        user_id: Optional[str] = None,
+        tool_name: str = "text2sql",
+        conversation_id: Optional[str] = None,
+    ) -> UserContext:
         """
         获取用户上下文，如不存在则创建
         
         Args:
             user_id: 用户ID，如为None则创建匿名ID
             tool_name: 工具名称
+            conversation_id: Dify conversation_id，可选
             
         Returns:
             用户上下文实例
@@ -79,14 +85,22 @@ class ContextManager:
         user_id = self._get_user_id(user_id)
         
         # 构造上下文键
-        context_key = f"{user_id}:{tool_name}"
+        context_key = (
+            f"{user_id}:{conversation_id}:{tool_name}"
+            if conversation_id
+            else f"{user_id}:{tool_name}"
+        )
         
         # 尝试获取上下文
         user_context = self.storage.get_context(context_key)
         
         # 不存在则创建新上下文
         if not user_context:
-            user_context = UserContext(user_id=user_id, tool_name=tool_name)
+            user_context = UserContext(
+                user_id=user_id,
+                conversation_id=conversation_id,
+                tool_name=tool_name,
+            )
             self.storage.save_context(user_context)
             
         return user_context
@@ -97,8 +111,9 @@ class ContextManager:
         sql: str,
         user_id: Optional[str] = None,
         tool_name: str = "text2sql",
+        conversation_id: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None
-    ) -> None:
+    ) -> bool:
         """
         添加对话记录
         
@@ -107,11 +122,12 @@ class ContextManager:
             sql: 生成的SQL
             user_id: 用户ID，可选
             tool_name: 工具名称，默认为text2sql
+            conversation_id: Dify conversation_id，可选
             metadata: 额外元数据
         """
         try:
             # 获取用户上下文
-            user_context = self.get_context(user_id, tool_name)
+            user_context = self.get_context(user_id, tool_name, conversation_id)
             
             # 创建对话记录
             conversation = Conversation(
@@ -124,16 +140,37 @@ class ContextManager:
             user_context.add_conversation(conversation)
             
             # 保存上下文
-            self.storage.save_context(user_context)
+            saved = self.storage.save_context(user_context)
             
-            self.logger.debug(f"成功添加对话记录，用户: {user_id}")
+            if saved:
+                self.logger.debug(f"成功添加对话记录，用户: {user_id}")
+                return True
+
+            self.logger.error(f"添加对话记录失败：存储未确认保存，用户: {user_id}")
+            return False
         except Exception as e:
             self.logger.error(f"添加对话记录失败: {e}")
+            return False
+
+    def get_conversation_count(
+        self,
+        user_id: Optional[str] = None,
+        tool_name: str = "text2sql",
+        conversation_id: Optional[str] = None,
+    ) -> int:
+        """获取指定用户和 Dify 会话下已保存的 SQL 记忆轮数。"""
+        try:
+            user_context = self.get_context(user_id, tool_name, conversation_id)
+            return len(user_context.conversations)
+        except Exception as e:
+            self.logger.error(f"获取对话记忆数量失败: {e}")
+            return 0
     
     def get_conversation_history(
         self,
         user_id: Optional[str] = None,
         tool_name: str = "text2sql",
+        conversation_id: Optional[str] = None,
         window_size: int = DEFAULT_MEMORY_WINDOW
     ) -> List[Dict[str, Any]]:
         """
@@ -142,6 +179,7 @@ class ContextManager:
         Args:
             user_id: 用户ID，可选
             tool_name: 工具名称
+            conversation_id: Dify conversation_id，可选
             window_size: 记忆窗口大小
             
         Returns:
@@ -149,7 +187,7 @@ class ContextManager:
         """
         try:
             # 获取用户上下文
-            user_context = self.get_context(user_id, tool_name)
+            user_context = self.get_context(user_id, tool_name, conversation_id)
             
             # 获取最近对话
             recent_conversations = user_context.get_recent_conversations(window_size)
@@ -163,7 +201,8 @@ class ContextManager:
     def reset_memory(
         self,
         user_id: Optional[str] = None,
-        tool_name: str = "text2sql"
+        tool_name: str = "text2sql",
+        conversation_id: Optional[str] = None,
     ) -> bool:
         """
         重置对话记忆
@@ -180,7 +219,7 @@ class ContextManager:
             user_id = self._get_user_id(user_id)
             
             # 获取用户上下文
-            user_context = self.get_context(user_id, tool_name)
+            user_context = self.get_context(user_id, tool_name, conversation_id)
             
             # 清空对话历史
             user_context.clear_conversations()

@@ -215,6 +215,34 @@ parameters:
           pt_BR: Disable
     default: "false"
 
+  - name: conversation_id
+    type: string
+    required: false
+    label:
+      en_US: Dify Conversation ID
+      zh_Hans: Dify 会话 ID
+      pt_BR: Dify Conversation ID
+    human_description:
+      en_US: The current Dify conversation ID used to isolate SQL memory.
+      zh_Hans: 用于隔离 SQL 记忆的当前 Dify conversation_id。
+      pt_BR: The current Dify conversation ID used to isolate SQL memory.
+    llm_description: The current Dify conversation ID used only for SQL memory isolation.
+    form: llm
+
+  - name: query_context
+    type: string
+    required: false
+    label:
+      en_US: Effective Query Context
+      zh_Hans: 有效查询上下文
+      pt_BR: Contexto efetivo da consulta
+    human_description:
+      en_US: Resolved JSON context with the effective subject and filters for this SQL generation.
+      zh_Hans: 本轮 SQL 生成使用的业务对象、有效条件等 JSON 上下文。
+      pt_BR: Contexto JSON resolvido com o assunto e filtros efetivos desta geração SQL.
+    llm_description: Resolved workflow context that must be applied to the generated SQL.
+    form: llm
+
   - name: memory_window_size
     type: number
     required: false
