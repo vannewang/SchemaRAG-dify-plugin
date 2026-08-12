@@ -34,6 +34,30 @@ parameters:
     llm_description: SQL query for field semantic inference.
     form: llm
 
+  - name: source_x_field
+    type: string
+    required: false
+    label:
+      zh_Hans: 原始维度字段
+      en_US: Source Dimension Field
+    human_description:
+      zh_Hans: 图表预处理前的原始维度字段名，用于区分时间轴和类别轴。
+      en_US: Original dimension field name before chart preprocessing.
+    llm_description: Original dimension field used to distinguish temporal and categorical axes.
+    form: llm
+
+  - name: source_y_field
+    type: string
+    required: false
+    label:
+      zh_Hans: 原始指标字段
+      en_US: Source Metric Field
+    human_description:
+      zh_Hans: 图表预处理前的原始指标字段名，用于保留指标语义。
+      en_US: Original metric field name before chart preprocessing.
+    llm_description: Original metric field retained for semantic metadata.
+    form: llm
+
   - name: data
     type: string
     required: true

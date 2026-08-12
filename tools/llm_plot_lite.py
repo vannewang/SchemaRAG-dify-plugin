@@ -14,11 +14,19 @@ class LlmPlotLiteTool(Tool):
     """Generate frontend-renderable chart JSON without LLM or external chart APIs."""
 
     MAX_ROWS = 200
+    TIME_FIELD_HINTS = (
+        "day_period", "month_period", "year_period", "hour_period",
+        "create_time", "alarm_time", "readable_create_time",
+        "date", "datetime", "timestamp", "日期", "时间", "小时", "月份", "年份",
+    )
+    PROPORTION_HINTS = ("占比", "比例", "分布", "构成", "份额", "percentage", "ratio", "pie")
 
     def _invoke(self, tool_parameters: dict[str, Any]) -> Generator[ToolInvokeMessage, None, None]:
         try:
             user_question = str(tool_parameters.get("user_question") or "").strip()
             sql_query = str(tool_parameters.get("sql_query") or "").strip()
+            source_x_field = str(tool_parameters.get("source_x_field") or "").strip()
+            source_y_field = str(tool_parameters.get("source_y_field") or "").strip()
             title = str(tool_parameters.get("title") or "").strip() or user_question or "数据图表"
             rows = self._parse_rows(tool_parameters.get("data"))
 
@@ -57,7 +65,14 @@ class LlmPlotLiteTool(Tool):
 
             x_field = self._choose_x_field(fields, dimension_fields, user_question, sql_query)
             y_field = self._choose_y_field(fields, numeric_fields)
-            chart_type = self._choose_chart_type(user_question, sql_query, rows, x_field, y_field)
+            chart_type = self._choose_chart_type(
+                user_question,
+                sql_query,
+                rows,
+                x_field,
+                y_field,
+                source_x_field,
+            )
             field_labels = {field: self._field_label(field) for field in fields}
 
             if not x_field or not y_field:
@@ -93,6 +108,8 @@ class LlmPlotLiteTool(Tool):
                 "title": title,
                 "x_field": x_field,
                 "y_field": y_field,
+                "source_x_field": source_x_field,
+                "source_y_field": source_y_field,
                 "series_field": series_field or "",
                 "x_label": self._field_label(x_field),
                 "y_label": self._field_label(y_field),
@@ -219,13 +236,38 @@ class LlmPlotLiteTool(Tool):
                 return field
         return ""
 
-    def _choose_chart_type(self, question: str, sql: str, rows: list[dict[str, Any]], x_field: str, y_field: str) -> str:
-        text = f"{question} {sql} {x_field}".lower()
-        if any(word in text for word in ("趋势", "走势", "变化", "按天", "按月", "按年", "近一周", "本周", "trend", "day_period", "month_period", "year_period", "time", "date")):
-            return "line"
-        if any(word in text for word in ("占比", "比例", "分布", "pie")) and len(rows) <= 12:
+    def _choose_chart_type(
+        self,
+        question: str,
+        sql: str,
+        rows: list[dict[str, Any]],
+        x_field: str,
+        y_field: str,
+        source_x_field: str = "",
+    ) -> str:
+        text = f"{question} {sql}".lower()
+        if any(word in text for word in self.PROPORTION_HINTS) and len(rows) <= 12:
             return "pie"
+        semantic_x_field = source_x_field or x_field
+        if self._is_time_field(semantic_x_field) or self._has_time_axis_values(rows, x_field):
+            return "line"
         return "bar"
+
+    def _is_time_field(self, field: str) -> bool:
+        normalized = str(field or "").strip().lower()
+        return bool(normalized) and any(hint in normalized for hint in self.TIME_FIELD_HINTS)
+
+    def _has_time_axis_values(self, rows: list[dict[str, Any]], x_field: str) -> bool:
+        values = [str(row.get(x_field) or "").strip() for row in rows[:30]]
+        values = [value for value in values if value]
+        if not values:
+            return False
+        patterns = (
+            r"^\d{4}-\d{2}-\d{2}(?:[ T]\d{2}(?::\d{2}(?::\d{2})?)?)?$",
+            r"^\d{4}-\d{2}$",
+            r"^\d{4}年(?:\d{1,2}月(?:\d{1,2}日)?)?$",
+        )
+        return all(any(re.fullmatch(pattern, value) for pattern in patterns) for value in values)
 
     def _build_echarts_option(
         self,

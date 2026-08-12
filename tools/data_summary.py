@@ -61,7 +61,9 @@ class DataSummaryTool(Tool):
         ):
             try:
                 parsed_data = json.loads(data_content)
-                return json.dumps(parsed_data, indent=2, ensure_ascii=False)
+                return json.dumps(
+                    parsed_data, ensure_ascii=False, separators=(",", ":")
+                )
             except json.JSONDecodeError:
                 pass
 
@@ -80,11 +82,92 @@ class DataSummaryTool(Tool):
         if len(data_content) <= max_length:
             return data_content, False
 
-        # 截断数据并添加提示
-        truncated_data = data_content[: max_length - 100]  # 预留空间给提示信息
-        truncated_data += "\n\n[注意: 数据内容过长已被截断，以上为部分数据内容]"
+        parsed_data, prefix = self._parse_structured_data(data_content)
+        if parsed_data is None:
+            truncated_data = data_content[: max_length - 100]
+            truncated_data += "\n\n[注意: 数据内容过长已被截断，以上为部分数据内容]"
+            return truncated_data, True
 
-        return truncated_data, True
+        if isinstance(parsed_data, dict) and isinstance(parsed_data.get("rows"), list):
+            return self._truncate_rows_payload(parsed_data, max_length, prefix), True
+
+        if isinstance(parsed_data, list):
+            return self._truncate_json_list(parsed_data, max_length, prefix), True
+
+        omitted_data = {
+            "data_omitted": True,
+            "reason": "结构化数据超过总结长度限制",
+        }
+        return prefix + self._dump_json(omitted_data), True
+
+    def _parse_structured_data(self, data_content: str) -> tuple[Any, str]:
+        text = str(data_content or "").strip()
+        prefix = ""
+        if text.upper().startswith("JSON:"):
+            prefix = "JSON:\n"
+            text = text[5:].lstrip()
+        try:
+            return json.loads(text), prefix
+        except json.JSONDecodeError:
+            return None, ""
+
+    def _truncate_rows_payload(
+        self, parsed_data: dict[str, Any], max_length: int, prefix: str
+    ) -> str:
+        rows = parsed_data["rows"]
+        pagination = parsed_data.get("pagination")
+        pagination = dict(pagination) if isinstance(pagination, dict) else {}
+        kept_rows: list[Any] = []
+
+        for row in rows:
+            candidate_rows = kept_rows + [row]
+            candidate_pagination = self._summary_pagination(
+                pagination, len(rows), len(candidate_rows)
+            )
+            candidate = {
+                "rows": candidate_rows,
+                "pagination": candidate_pagination,
+            }
+            if len(prefix + self._dump_json(candidate)) > max_length:
+                break
+            kept_rows = candidate_rows
+
+        final_pagination = self._summary_pagination(
+            pagination, len(rows), len(kept_rows)
+        )
+        final_pagination["oversized_single_row"] = bool(rows and not kept_rows)
+        result = {"rows": kept_rows, "pagination": final_pagination}
+        return prefix + self._dump_json(result)
+
+    def _truncate_json_list(
+        self, rows: list[Any], max_length: int, prefix: str
+    ) -> str:
+        kept_rows: list[Any] = []
+        for row in rows:
+            candidate = kept_rows + [row]
+            if len(prefix + self._dump_json(candidate)) > max_length:
+                break
+            kept_rows = candidate
+        return prefix + self._dump_json(kept_rows)
+
+    @staticmethod
+    def _summary_pagination(
+        pagination: dict[str, Any], source_count: int, summary_count: int
+    ) -> dict[str, Any]:
+        result = dict(pagination)
+        result.update(
+            {
+                "source_rows_count": source_count,
+                "summary_rows_count": summary_count,
+                "summary_rows_truncated": summary_count < source_count,
+                "oversized_single_row": False,
+            }
+        )
+        return result
+
+    @staticmethod
+    def _dump_json(value: Any) -> str:
+        return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
 
     def _invoke(self, tool_parameters: dict[str, Any]) -> Generator[ToolInvokeMessage]:
         """
@@ -106,13 +189,6 @@ class DataSummaryTool(Tool):
                 self.logger.error("错误: 缺少LLM模型配置")
                 raise ValueError("缺少LLM模型配置")
 
-            is_valid, error_message = self._validate_input_data(
-                data_content, query, custom_rules
-            )
-            if not is_valid:
-                self.logger.error(f"输入验证失败: {error_message}")
-                raise ValueError(error_message)
-
             # 格式化数据内容
             try:
                 formatted_data = self._format_data_content(data_content, data_format)
@@ -125,6 +201,13 @@ class DataSummaryTool(Tool):
             final_data, was_truncated = self._truncate_data_if_needed(formatted_data)
             if was_truncated:
                 self.logger.info("注意: 数据内容过长，已自动截断部分内容进行分析")
+
+            is_valid, error_message = self._validate_input_data(
+                final_data, query, custom_rules
+            )
+            if not is_valid:
+                self.logger.error(f"输入验证失败: {error_message}")
+                raise ValueError(error_message)
 
             # 构建prompt逻辑
             if user_prompt and user_prompt.strip():
